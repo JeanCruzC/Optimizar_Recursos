@@ -1,0 +1,5 @@
+pandas
+numpy
+pyworkforce
+streamlit
+openpyxl
