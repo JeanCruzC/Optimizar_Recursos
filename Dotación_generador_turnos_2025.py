@@ -41,6 +41,7 @@ employees   = df_staff['Nombre'].astype(str).tolist()
 base_shifts = df_staff['Horario'].astype(str).tolist()
 
 # 2. DEFINICIÓN DE TURNOS ---------------------------------------
+# 2. DEFINICIÓN DE TURNOS ---------------------------------------
 shifts_coverage = {
     # ----------------------------------------------------------
     # TURNOS FULL‑TIME 8H
@@ -184,15 +185,16 @@ def coverage_pct(sol, dist):
     offs = greedy_day_off_assignment(len(shifts_coverage), dist)
     day_map = {s:dias_semana[d] for s,d in zip(shifts_coverage, offs)}
     diff, total = 0, sum(map(sum, required_resources))
-    for d, day in enumerate(dias_semana):
+    for d in range(7):
         for h in range(24):
             req = required_resources[d][h]
-            work = 0
-            for row in sol['resources_shifts']:
-                if (row['day']==d
-                   and shifts_coverage[row['shift']][h]
-                   and day_map[row['shift']]!=day):
-                    work += row.get('resources',1)
+            work = sum(
+                row.get('resources',1)
+                for row in sol.get('resources_shifts',[])
+                if row['day']==d
+                and shifts_coverage[row['shift']][h]
+                and day_map[row['shift']]!=dias_semana[d]
+            )
             diff += abs(work-req)
     return (1-diff/total)*100
 
@@ -201,8 +203,10 @@ def coverage_manual(plan):
     for d in range(7):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(1 for shift,off in plan
-                       if shifts_coverage.get(shift,[0]*24)[h] and off!=d)
+            work = sum(
+                1 for shift,off in plan
+                if shifts_coverage.get(shift,[0]*24)[h] and off!=d
+            )
             diff += abs(work-req)
     return (1-diff/total)*100
 
@@ -250,40 +254,31 @@ if st.button("🚀 Ejecutar Optimización"):
                 best_cov2, best_pat = cov2, p
         plan.append((best_pat, days_off[i]))
 
-    # 7. Exportación de resultados
+    # 7. Preparar buffers de descarga en sesión
     suf = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # 7.1 Resultados crudos
-    df_raw = pd.DataFrame(best_sol['resources_shifts']) if best_sol else pd.DataFrame()
+    # 7.1 Raw
+    df_raw = pd.DataFrame(best_sol.get('resources_shifts',[]))
     buf1 = BytesIO()
     with pd.ExcelWriter(buf1, engine="openpyxl") as w:
         df_raw.to_excel(w, sheet_name="Raw", index=False)
     buf1.seek(0)
-    st.download_button("Descargar Result_"+suf+".xlsx", buf1,
-                       file_name=f"Result_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7.2 Plan de contratación
+    st.session_state["down_raw"] = (buf1, f"Result_{suf}.xlsx")
+    # 7.2 Contratación
     summary = pd.DataFrame({
-        'Nombre': [e for e in employees],
+        'Nombre': employees,
         'Horario': [p for p,_ in plan],
         'Día Desc.': [dias_semana[off] for _,off in plan]
     })
     summary['Tipo con.'] = summary['Horario'].apply(lambda s: '8h' if s.startswith('FT') else '4h')
     summary['Personal a Contratar'] = 1
     plan_con = summary.groupby(['Horario','Tipo con.','Día Desc.'], as_index=False).sum()
-    plan_con['Refrig'] = plan_con['Horario'].apply(
-        lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-'
-    )
+    plan_con['Refrig'] = plan_con['Horario'].apply(lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-')
     buf2 = BytesIO()
     with pd.ExcelWriter(buf2, engine="openpyxl") as w2:
         plan_con.to_excel(w2, sheet_name="Contratacion", index=False)
     buf2.seek(0)
-    st.download_button("Descargar Plan_Contratacion_"+suf+".xlsx", buf2,
-                       file_name=f"Plan_Contratacion_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7.3 Detalle programación diaria
+    st.session_state["down_con"] = (buf2, f"Plan_Contratacion_{suf}.xlsx")
+    # 7.3 Detalle diaria
     rows = []
     for i, emp in enumerate(employees):
         pat, off = plan[i]
@@ -299,17 +294,16 @@ if st.button("🚀 Ejecutar Optimización"):
     with pd.ExcelWriter(buf3, engine="openpyxl") as w3:
         df_det.to_excel(w3, sheet_name="Detalle", index=False)
     buf3.seek(0)
-    st.download_button("Descargar Detalle_Programacion_"+suf+".xlsx", buf3,
-                       file_name=f"Detalle_Programacion_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7.4 Verificación cobertura
+    st.session_state["down_det"] = (buf3, f"Detalle_Programacion_{suf}.xlsx")
+    # 7.4 Cobertura
     cov_rows = []
     for d, dia in enumerate(dias_semana):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(1 for pat,off in plan
-                       if off!=d and shifts_coverage.get(pat,[0]*24)[h])
+            work = sum(
+                1 for pat,off in plan
+                if off!=d and shifts_coverage.get(pat,[0]*24)[h]
+            )
             cov_rows.append({
                 'Día Semana': dia,
                 'Hora': f"{h:02d}:00",
@@ -322,6 +316,25 @@ if st.button("🚀 Ejecutar Optimización"):
     with pd.ExcelWriter(buf4, engine="openpyxl") as w4:
         df_cov.to_excel(w4, sheet_name="Cobertura", index=False)
     buf4.seek(0)
-    st.download_button("Descargar Verificacion_Cobertura_"+suf+".xlsx", buf4,
-                       file_name=f"Verificacion_Cobertura_{suf}.xlsx",
+    st.session_state["down_cov"] = (buf4, f"Verificacion_Cobertura_{suf}.xlsx")
+
+# ——— Botones de descarga persistentes —————————————————————
+if "down_raw" in st.session_state:
+    buf, fname = st.session_state["down_raw"]
+    st.download_button("📥 Descargar Resultados crudos", buf, file_name=fname,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+if "down_con" in st.session_state:
+    buf, fname = st.session_state["down_con"]
+    st.download_button("📥 Descargar Plan de Contratación", buf, file_name=fname,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+if "down_det" in st.session_state:
+    buf, fname = st.session_state["down_det"]
+    st.download_button("📥 Descargar Detalle de Programación", buf, file_name=fname,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+if "down_cov" in st.session_state:
+    buf, fname = st.session_state["down_cov"]
+    st.download_button("📥 Descargar Verificación de Cobertura", buf, file_name=fname,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
