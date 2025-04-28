@@ -7,11 +7,10 @@ from pyworkforce.scheduling import MinAbsDifference
 import datetime
 from io import BytesIO
 
-# Configuración de la app
 st.set_page_config(page_title="Generador de Turnos 2025", layout="wide")
 st.title("🛠️ Generador de Turnos 2025")
 
-# — Sidebar: Parámetros —
+# ——— Sidebar: parámetros ———————————————————————————
 st.sidebar.header("Parámetros de Optimización")
 MAX_ITER      = st.sidebar.number_input("Iteraciones (MAX_ITER)",    min_value=1,   value=200,  step=10)
 TIME_SOLVER   = st.sidebar.number_input("Tiempo por solver (seg)",  min_value=1.0, value=15.0, step=1.0)
@@ -21,17 +20,17 @@ MIN_REST_PCT  = st.sidebar.slider("Pct mínimo descanso (MIN_REST_PCT)", 0.0, 1.
 ANNEALING     = st.sidebar.checkbox("Usar annealing", True)
 NOISE_FINAL   = st.sidebar.slider("Ruido final (NOISE_FINAL)",        0.0, 1.0, 0.05)
 
-# — Carga de archivo —
+# ——— Carga de datos ———————————————————————————————
 uploaded = st.file_uploader("📂 Sube tu Excel (hoja1: demanda, hoja2: staff)", type=["xlsx"])
 if not uploaded:
     st.info("Por favor, sube un archivo .xlsx con dos hojas (demanda y staff).")
     st.stop()
 
-# — Lectura de datos —
+# lee directamente desde el buffer de Streamlit
 df_dem   = pd.read_excel(uploaded, sheet_name=0)
 df_staff = pd.read_excel(uploaded, sheet_name=1)
 
-# — Reconstrucción de demanda y staff —
+# reconstruye estructura original
 dias_semana = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo']
 required_resources = [[] for _ in range(7)]
 for _, r in df_dem.iterrows():
@@ -41,7 +40,6 @@ assert all(len(d)==24 for d in required_resources), "Demanda debe tener 24 perio
 employees   = df_staff['Nombre'].astype(str).tolist()
 base_shifts = df_staff['Horario'].astype(str).tolist()
 
-# — Definición de turnos —
 # 2. DEFINICIÓN DE TURNOS ---------------------------------------
 shifts_coverage = {
     # ----------------------------------------------------------
@@ -149,7 +147,7 @@ shifts_coverage = {
     "23_4":[1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
 }
 
-# — Funciones auxiliares —
+# ——— Funciones auxiliares ——————————————————————————
 def adjust_required(dist):
     return [[math.ceil(req/(1-dist[d])) for req in day]
             for d, day in enumerate(required_resources)]
@@ -181,31 +179,22 @@ def mutate_dist(base, it):
     return cand
 
 def coverage_pct(sol, dist):
-    # Debug: inspección de sol
-    st.write(f"🐞 coverage_pct: sol.keys={list(sol.keys())}")
-    st.write(f"🐞 coverage_pct: status={sol.get('status')}")
-    assignments = sol.get('resources_shifts') or sol.get('assignments') or []
-    st.write(f"🐞 coverage_pct: assignments_len={len(assignments)}")
-    if sol.get('status') not in ('OPTIMAL','FEASIBLE') or not assignments:
+    if sol.get('status') not in ('OPTIMAL','FEASIBLE'):
         return 0.0
     offs = greedy_day_off_assignment(len(shifts_coverage), dist)
     day_map = {s:dias_semana[d] for s,d in zip(shifts_coverage, offs)}
     diff, total = 0, sum(map(sum, required_resources))
-    st.write(f"🐞 coverage_pct: total_demand={total}")
-    for d in range(7):
+    for d, day in enumerate(dias_semana):
         for h in range(24):
             req = required_resources[d][h]
             work = 0
-            for row in assignments:
-                day_i = row.get('day') or row.get('day_index')
-                shift = row.get('shift') or row.get('shift_name') or row.get('shift_id')
-                res   = row.get('resources') or row.get('n_resources') or 1
-                if day_i==d and shifts_coverage.get(shift,[0]*24)[h] and day_map.get(shift)!=dias_semana[d]:
-                    work += res
+            for row in sol['resources_shifts']:
+                if (row['day']==d
+                   and shifts_coverage[row['shift']][h]
+                   and day_map[row['shift']]!=day):
+                    work += row.get('resources',1)
             diff += abs(work-req)
-    coverage = (1-diff/total)*100
-    st.write(f"🐞 coverage_pct: diff={diff}, coverage={coverage:.2f}%")
-    return coverage
+    return (1-diff/total)*100
 
 def coverage_manual(plan):
     diff, total = 0, sum(map(sum, required_resources))
@@ -217,7 +206,7 @@ def coverage_manual(plan):
             diff += abs(work-req)
     return (1-diff/total)*100
 
-# — Ejecutar optimización —
+# ——— Botón de ejecución ———————————————————————————
 if st.button("🚀 Ejecutar Optimización"):
     progress = st.empty()
     best_cov, best_sol, best_dist = -1, None, None
@@ -229,7 +218,6 @@ if st.button("🚀 Ejecutar Optimización"):
     for it in range(int(MAX_ITER)):
         start = time.time()
         dist  = mutate_dist(base_rest, it) if it else base_rest.copy()
-        st.write(f"🐞 Iter {it+1}: dist[:3]={dist[:3]}")
 
         solver = MinAbsDifference(
             num_days=7, periods=24,
@@ -242,19 +230,15 @@ if st.button("🚀 Ejecutar Optimización"):
             random_seed=int(SEED_START+it)
         )
         sol = solver.solve()
-        st.write(f"🐞 Iter {it+1}: sol.status={sol.get('status')}")
-
         cov = coverage_pct(sol, dist)
-        progress.text(f"Iter {it+1}/{int(MAX_ITER)} — cobertura: {cov:.2f}% (t={time.time()-start:.1f}s)")
-        st.write(f"🐞 Iter {it+1}: coverage={cov:.2f}%")
 
-        if cov>best_cov:
+        progress.text(f"Iter {it+1}/{int(MAX_ITER)} — cobertura: {cov:.2f}%  (t={time.time()-start:.1f}s)")
+        if cov > best_cov:
             best_cov, best_sol, best_dist = cov, sol, dist.copy()
-            st.write(f"🐞 Nuevo mejor: {best_cov:.2f}% en iter {it+1}")
 
     st.success(f"✅ Optimización completa. Mejor cobertura: {best_cov:.2f}%")
 
-    # — Asignación final —
+    # 6. Asignación greedy final
     days_off = greedy_day_off_assignment(len(employees), best_dist)
     plan = []
     for i, emp in enumerate(employees):
@@ -262,14 +246,15 @@ if st.button("🚀 Ejecutar Optimización"):
         for suf in [1,2,3]:
             p = f"{base_shifts[i]}_{suf}"
             cov2 = coverage_manual(plan+[(p, days_off[i])])
-            if cov2>best_cov2:
+            if cov2 > best_cov2:
                 best_cov2, best_pat = cov2, p
         plan.append((best_pat, days_off[i]))
 
-    # — Exportar resultados —
+    # 7. Exportación de resultados
     suf = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    # 7.1 Raw
-    df_raw = pd.DataFrame(best_sol.get('resources_shifts', []))
+
+    # 7.1 Resultados crudos
+    df_raw = pd.DataFrame(best_sol['resources_shifts']) if best_sol else pd.DataFrame()
     buf1 = BytesIO()
     with pd.ExcelWriter(buf1, engine="openpyxl") as w:
         df_raw.to_excel(w, sheet_name="Raw", index=False)
@@ -277,16 +262,19 @@ if st.button("🚀 Ejecutar Optimización"):
     st.download_button("Descargar Result_"+suf+".xlsx", buf1,
                        file_name=f"Result_{suf}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    # 7.2 Contratación
+
+    # 7.2 Plan de contratación
     summary = pd.DataFrame({
-        'Nombre':employees,
-        'Horario':[p for p,_ in plan],
-        'Día Desc.':[dias_semana[off] for _,off in plan]
+        'Nombre': [e for e in employees],
+        'Horario': [p for p,_ in plan],
+        'Día Desc.': [dias_semana[off] for _,off in plan]
     })
-    summary['Tipo con.'] = summary['Horario'].apply(lambda s:'8h' if s.startswith('FT') else '4h')
+    summary['Tipo con.'] = summary['Horario'].apply(lambda s: '8h' if s.startswith('FT') else '4h')
     summary['Personal a Contratar'] = 1
-    plan_con = summary.groupby(['Horario','Tipo con.','Día Desc.'],as_index=False).sum()
-    plan_con['Refrig'] = plan_con['Horario'].apply(lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-')
+    plan_con = summary.groupby(['Horario','Tipo con.','Día Desc.'], as_index=False).sum()
+    plan_con['Refrig'] = plan_con['Horario'].apply(
+        lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-'
+    )
     buf2 = BytesIO()
     with pd.ExcelWriter(buf2, engine="openpyxl") as w2:
         plan_con.to_excel(w2, sheet_name="Contratacion", index=False)
@@ -294,14 +282,15 @@ if st.button("🚀 Ejecutar Optimización"):
     st.download_button("Descargar Plan_Contratacion_"+suf+".xlsx", buf2,
                        file_name=f"Plan_Contratacion_{suf}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    # 7.3 Detalle
+
+    # 7.3 Detalle programación diaria
     rows = []
     for i, emp in enumerate(employees):
         pat, off = plan[i]
         for d in range(7):
             rows.append({
                 'Nombre': emp,
-                'Día Semana': dias_semana[d],
+                'Día': dias_semana[d],
                 'Horario': 'Descanso' if d==off else pat,
                 'Refrig': '-' if d==off else (f"Refrigerio {pat.split('_')[-1]}" if pat.startswith('FT') else '-')
             })
@@ -313,14 +302,16 @@ if st.button("🚀 Ejecutar Optimización"):
     st.download_button("Descargar Detalle_Programacion_"+suf+".xlsx", buf3,
                        file_name=f"Detalle_Programacion_{suf}.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-    # 7.4 Cobertura
+
+    # 7.4 Verificación cobertura
     cov_rows = []
-    for d in range(7):
+    for d, dia in enumerate(dias_semana):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(1 for pat,off in plan if off!=d and shifts_coverage.get(pat,[0]*24)[h])
+            work = sum(1 for pat,off in plan
+                       if off!=d and shifts_coverage.get(pat,[0]*24)[h])
             cov_rows.append({
-                'Día Semana': dias_semana[d],
+                'Día Semana': dia,
                 'Hora': f"{h:02d}:00",
                 'Requeridos': req,
                 'Asignados': work,
