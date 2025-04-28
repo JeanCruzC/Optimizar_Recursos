@@ -26,7 +26,6 @@ if not uploaded:
     st.info("Por favor, sube un archivo .xlsx con dos hojas (demanda y staff).")
     st.stop()
 
-# lee directamente desde el buffer de Streamlit
 df_dem   = pd.read_excel(uploaded, sheet_name=0)
 df_staff = pd.read_excel(uploaded, sheet_name=1)
 
@@ -40,7 +39,6 @@ assert all(len(d)==24 for d in required_resources), "Demanda debe tener 24 perio
 employees   = df_staff['Nombre'].astype(str).tolist()
 base_shifts = df_staff['Horario'].astype(str).tolist()
 
-# 2. DEFINICIÓN DE TURNOS ---------------------------------------
 # 2. DEFINICIÓN DE TURNOS ---------------------------------------
 shifts_coverage = {
     # ----------------------------------------------------------
@@ -188,13 +186,12 @@ def coverage_pct(sol, dist):
     for d in range(7):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(
-                row.get('resources',1)
-                for row in sol.get('resources_shifts',[])
-                if row['day']==d
-                and shifts_coverage[row['shift']][h]
-                and day_map[row['shift']]!=dias_semana[d]
-            )
+            work = 0
+            for row in sol['resources_shifts']:
+                if (row['day']==d
+                   and shifts_coverage[row['shift']][h]
+                   and day_map[row['shift']]!=dias_semana[d]):
+                    work += row.get('resources',1)
             diff += abs(work-req)
     return (1-diff/total)*100
 
@@ -203,21 +200,19 @@ def coverage_manual(plan):
     for d in range(7):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(
-                1 for shift,off in plan
-                if shifts_coverage.get(shift,[0]*24)[h] and off!=d
-            )
+            work = sum(1 for shift,off in plan
+                       if shifts_coverage.get(shift,[0]*24)[h] and off!=d)
             diff += abs(work-req)
     return (1-diff/total)*100
 
-# ——— Botón de ejecución ———————————————————————————
-if st.button("🚀 Ejecutar Optimización"):
-    progress = st.empty()
-    best_cov, best_sol, best_dist = -1, None, None
-
+# ——— Función de Optimización (guarda buffers en session_state) ——————————————————
+def run_optimization():
     daily_totals = [sum(d) for d in required_resources]
     base_rest    = np.array([1/max(1,x) for x in daily_totals])
     base_rest   /= base_rest.sum()
+
+    best_cov, best_sol, best_dist = -1, None, None
+    progress = st.empty()
 
     for it in range(int(MAX_ITER)):
         start = time.time()
@@ -254,16 +249,18 @@ if st.button("🚀 Ejecutar Optimización"):
                 best_cov2, best_pat = cov2, p
         plan.append((best_pat, days_off[i]))
 
-    # 7. Preparar buffers de descarga en sesión
     suf = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    # 7.1 Raw
-    df_raw = pd.DataFrame(best_sol.get('resources_shifts',[]))
+
+    # 7.1 Resultados crudos
+    df_raw = pd.DataFrame(best_sol['resources_shifts']) if best_sol else pd.DataFrame()
     buf1 = BytesIO()
     with pd.ExcelWriter(buf1, engine="openpyxl") as w:
         df_raw.to_excel(w, sheet_name="Raw", index=False)
     buf1.seek(0)
-    st.session_state["down_raw"] = (buf1, f"Result_{suf}.xlsx")
-    # 7.2 Contratación
+    st.session_state.buf1 = buf1
+    st.session_state.fn1  = f"Result_{suf}.xlsx"
+
+    # 7.2 Plan de contratación
     summary = pd.DataFrame({
         'Nombre': employees,
         'Horario': [p for p,_ in plan],
@@ -272,13 +269,17 @@ if st.button("🚀 Ejecutar Optimización"):
     summary['Tipo con.'] = summary['Horario'].apply(lambda s: '8h' if s.startswith('FT') else '4h')
     summary['Personal a Contratar'] = 1
     plan_con = summary.groupby(['Horario','Tipo con.','Día Desc.'], as_index=False).sum()
-    plan_con['Refrig'] = plan_con['Horario'].apply(lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-')
+    plan_con['Refrig'] = plan_con['Horario'].apply(
+        lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-'
+    )
     buf2 = BytesIO()
     with pd.ExcelWriter(buf2, engine="openpyxl") as w2:
         plan_con.to_excel(w2, sheet_name="Contratacion", index=False)
     buf2.seek(0)
-    st.session_state["down_con"] = (buf2, f"Plan_Contratacion_{suf}.xlsx")
-    # 7.3 Detalle diaria
+    st.session_state.buf2 = buf2
+    st.session_state.fn2  = f"Plan_Contratacion_{suf}.xlsx"
+
+    # 7.3 Detalle programación diaria
     rows = []
     for i, emp in enumerate(employees):
         pat, off = plan[i]
@@ -294,16 +295,16 @@ if st.button("🚀 Ejecutar Optimización"):
     with pd.ExcelWriter(buf3, engine="openpyxl") as w3:
         df_det.to_excel(w3, sheet_name="Detalle", index=False)
     buf3.seek(0)
-    st.session_state["down_det"] = (buf3, f"Detalle_Programacion_{suf}.xlsx")
-    # 7.4 Cobertura
+    st.session_state.buf3 = buf3
+    st.session_state.fn3  = f"Detalle_Programacion_{suf}.xlsx"
+
+    # 7.4 Verificación cobertura
     cov_rows = []
     for d, dia in enumerate(dias_semana):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(
-                1 for pat,off in plan
-                if off!=d and shifts_coverage.get(pat,[0]*24)[h]
-            )
+            work = sum(1 for pat,off in plan
+                       if off!=d and shifts_coverage.get(pat,[0]*24)[h])
             cov_rows.append({
                 'Día Semana': dia,
                 'Hora': f"{h:02d}:00",
@@ -316,25 +317,41 @@ if st.button("🚀 Ejecutar Optimización"):
     with pd.ExcelWriter(buf4, engine="openpyxl") as w4:
         df_cov.to_excel(w4, sheet_name="Cobertura", index=False)
     buf4.seek(0)
-    st.session_state["down_cov"] = (buf4, f"Verificacion_Cobertura_{suf}.xlsx")
+    st.session_state.buf4 = buf4
+    st.session_state.fn4  = f"Verificacion_Cobertura_{suf}.xlsx"
 
-# ——— Botones de descarga persistentes —————————————————————
-if "down_raw" in st.session_state:
-    buf, fname = st.session_state["down_raw"]
-    st.download_button("📥 Descargar Resultados crudos", buf, file_name=fname,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+# ——— Botón de ejecución ———————————————————————————
+if 'buf1' not in st.session_state:
+    if st.button("🚀 Ejecutar Optimización"):
+        run_optimization()
 
-if "down_con" in st.session_state:
-    buf, fname = st.session_state["down_con"]
-    st.download_button("📥 Descargar Plan de Contratación", buf, file_name=fname,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-if "down_det" in st.session_state:
-    buf, fname = st.session_state["down_det"]
-    st.download_button("📥 Descargar Detalle de Programación", buf, file_name=fname,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-if "down_cov" in st.session_state:
-    buf, fname = st.session_state["down_cov"]
-    st.download_button("📥 Descargar Verificación de Cobertura", buf, file_name=fname,
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+# ——— Siempre mostrar los botones de descarga si existen ———————————————————————————
+if 'buf1' in st.session_state:
+    st.download_button(
+        "⬇️ Descargar Resultados crudos",
+        st.session_state.buf1,
+        file_name=st.session_state.fn1,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl1"
+    )
+    st.download_button(
+        "⬇️ Descargar Plan de Contratación",
+        st.session_state.buf2,
+        file_name=st.session_state.fn2,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl2"
+    )
+    st.download_button(
+        "⬇️ Descargar Detalle Programación",
+        st.session_state.buf3,
+        file_name=st.session_state.fn3,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl3"
+    )
+    st.download_button(
+        "⬇️ Descargar Verificación Cobertura",
+        st.session_state.buf4,
+        file_name=st.session_state.fn4,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dl4"
+    )
