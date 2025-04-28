@@ -26,6 +26,7 @@ if not uploaded:
     st.info("Por favor, sube un archivo .xlsx con dos hojas (demanda y staff).")
     st.stop()
 
+# lee directamente desde el buffer de Streamlit
 df_dem   = pd.read_excel(uploaded, sheet_name=0)
 df_staff = pd.read_excel(uploaded, sheet_name=1)
 
@@ -39,112 +40,8 @@ assert all(len(d)==24 for d in required_resources), "Demanda debe tener 24 perio
 employees   = df_staff['Nombre'].astype(str).tolist()
 base_shifts = df_staff['Horario'].astype(str).tolist()
 
-# 2. DEFINICIÓN DE TURNOS ---------------------------------------
-shifts_coverage = {
-    # ----------------------------------------------------------
-    # TURNOS FULL‑TIME 8H
-    # ----------------------------------------------------------
-    "FT_00:00_1":[1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_00:00_2":[1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_00:00_3":[1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_01:00_1":[0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_01:00_2":[0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_01:00_3":[0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_02:00_1":[0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_02:00_2":[0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_02:00_3":[0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_03:00_1":[0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_03:00_2":[0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_03:00_3":[0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_04:00_1":[0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_04:00_2":[0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_04:00_3":[0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0],
-    "FT_05:00_1":[0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0],
-    "FT_05:00_2":[0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0],
-    "FT_05:00_3":[0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0],
-    "FT_06:00_1":[0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0],
-    "FT_06:00_2":[0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0],
-    "FT_06:00_3":[0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0],
-    "FT_07:00_1":[0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0],
-    "FT_07:00_2":[0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0],
-    "FT_07:00_3":[0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0],
-    "FT_08:00_1":[0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0,0],
-    "FT_08:00_2":[0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0,0],
-    "FT_08:00_3":[0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0,0],
-    "FT_09:00_1":[0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0,0],
-    "FT_09:00_2":[0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0,0],
-    "FT_09:00_3":[0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0],
-    "FT_10:00_1":[0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0,0],
-    "FT_10:00_2":[0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0,0],
-    "FT_10:00_3":[0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0,0],
-    "FT_11:00_1":[0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0,0],
-    "FT_11:00_2":[0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0,0],
-    "FT_11:00_3":[0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0,0],
-    "FT_12:00_1":[0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0,0],
-    "FT_12:00_2":[0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0,0],
-    "FT_12:00_3":[0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0,0],
-    "FT_13:00_1":[0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0,0],
-    "FT_13:00_2":[0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0,0],
-    "FT_13:00_3":[0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0,0],
-    "FT_14:00_1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1,0],
-    "FT_14:00_2":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1,0],
-    "FT_14:00_3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1,0],
-    "FT_15:00_1":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1,1],
-    "FT_15:00_2":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1,1],
-    "FT_15:00_3":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1,1],
-    "FT_16:00_1":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1,1],
-    "FT_16:00_2":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1,1],
-    "FT_16:00_3":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1,1],
-    "FT_17:00_1":[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1,1],
-    "FT_17:00_2":[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1,1],
-    "FT_17:00_3":[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,0,1],
-    "FT_18:00_1":[1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1,1],
-    "FT_18:00_2":[1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,1],
-    "FT_18:00_3":[1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1],
-    "FT_19:00_1":[1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,1],
-    "FT_19:00_2":[1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1],
-    "FT_19:00_3":[0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1],
-    "FT_20:00_1":[1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1],
-    "FT_20:00_2":[0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1],
-    "FT_20:00_3":[1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1],
-    "FT_21:00_1":[0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
-    "FT_21:00_2":[1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
-    "FT_21:00_3":[1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
-    "FT_22:00_1":[1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
-    "FT_22:00_2":[1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
-    "FT_22:00_3":[1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
-    "FT_23:00_1":[1,1,0,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    "FT_23:00_2":[1,1,1,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-    "FT_23:00_3":[1,1,1,1,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-
-    # ----------------------------------------------------------
-    # TURNOS PART‑TIME 4H
-    # ----------------------------------------------------------
-    "00_4":[1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "01_4":[0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "02_4":[0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "03_4":[0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "04_4":[0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "05_4":[0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "06_4":[0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "07_4":[0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
-    "08_4":[0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0],
-    "09_4":[0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0,0],
-    "10_4":[0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0,0],
-    "11_4":[0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0,0],
-    "12_4":[0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0,0],
-    "13_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0,0],
-    "14_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0,0],
-    "15_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0,0],
-    "16_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0],
-    "17_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,0],
-    "18_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0],
-    "19_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0],
-    "20_4":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1],
-    "21_4":[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],
-    "22_4":[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
-    "23_4":[1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
-}
+# definición de shifts_coverage (igual que tu código original) …
+# [… pega aquí tu dict shifts_coverage completo …]
 
 # ——— Funciones auxiliares ——————————————————————————
 def adjust_required(dist):
@@ -186,12 +83,13 @@ def coverage_pct(sol, dist):
     for d in range(7):
         for h in range(24):
             req = required_resources[d][h]
-            work = 0
-            for row in sol['resources_shifts']:
-                if (row['day']==d
+            work = sum(
+                row.get('resources',1)
+                for row in sol.get('resources_shifts',[])
+                if row['day']==d
                    and shifts_coverage[row['shift']][h]
-                   and day_map[row['shift']]!=dias_semana[d]):
-                    work += row.get('resources',1)
+                   and day_map[row['shift']]!=dias_semana[d]
+            )
             diff += abs(work-req)
     return (1-diff/total)*100
 
@@ -200,24 +98,24 @@ def coverage_manual(plan):
     for d in range(7):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(1 for shift,off in plan
-                       if shifts_coverage.get(shift,[0]*24)[h] and off!=d)
+            work = sum(
+                1 for shift,off in plan
+                if shifts_coverage.get(shift,[0]*24)[h] and off!=d
+            )
             diff += abs(work-req)
     return (1-diff/total)*100
 
-# ——— Función de Optimización (guarda buffers en session_state) ——————————————————
 def run_optimization():
+    # encapsulamos toda la lógica de optimización y generación de buffers
     daily_totals = [sum(d) for d in required_resources]
     base_rest    = np.array([1/max(1,x) for x in daily_totals])
     base_rest   /= base_rest.sum()
-
     best_cov, best_sol, best_dist = -1, None, None
-    progress = st.empty()
 
+    progress = st.empty()
     for it in range(int(MAX_ITER)):
         start = time.time()
         dist  = mutate_dist(base_rest, it) if it else base_rest.copy()
-
         solver = MinAbsDifference(
             num_days=7, periods=24,
             shifts_coverage=shifts_coverage,
@@ -230,14 +128,12 @@ def run_optimization():
         )
         sol = solver.solve()
         cov = coverage_pct(sol, dist)
-
         progress.text(f"Iter {it+1}/{int(MAX_ITER)} — cobertura: {cov:.2f}%  (t={time.time()-start:.1f}s)")
         if cov > best_cov:
             best_cov, best_sol, best_dist = cov, sol, dist.copy()
-
     st.success(f"✅ Optimización completa. Mejor cobertura: {best_cov:.2f}%")
 
-    # 6. Asignación greedy final
+    # calculamos el plan final
     days_off = greedy_day_off_assignment(len(employees), best_dist)
     plan = []
     for i, emp in enumerate(employees):
@@ -252,13 +148,12 @@ def run_optimization():
     suf = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # 7.1 Resultados crudos
-    df_raw = pd.DataFrame(best_sol['resources_shifts']) if best_sol else pd.DataFrame()
+    df_raw = pd.DataFrame(best_sol.get('resources_shifts', []))
     buf1 = BytesIO()
     with pd.ExcelWriter(buf1, engine="openpyxl") as w:
         df_raw.to_excel(w, sheet_name="Raw", index=False)
     buf1.seek(0)
-    st.session_state.buf1 = buf1
-    st.session_state.fn1  = f"Result_{suf}.xlsx"
+    st.session_state['buf1'] = buf1
 
     # 7.2 Plan de contratación
     summary = pd.DataFrame({
@@ -276,8 +171,7 @@ def run_optimization():
     with pd.ExcelWriter(buf2, engine="openpyxl") as w2:
         plan_con.to_excel(w2, sheet_name="Contratacion", index=False)
     buf2.seek(0)
-    st.session_state.buf2 = buf2
-    st.session_state.fn2  = f"Plan_Contratacion_{suf}.xlsx"
+    st.session_state['buf2'] = buf2
 
     # 7.3 Detalle programación diaria
     rows = []
@@ -288,23 +182,26 @@ def run_optimization():
                 'Nombre': emp,
                 'Día': dias_semana[d],
                 'Horario': 'Descanso' if d==off else pat,
-                'Refrig': '-' if d==off else (f"Refrigerio {pat.split('_')[-1]}" if pat.startswith('FT') else '-')
+                'Refrig': '-' if d==off else (
+                    f"Refrigerio {pat.split('_')[-1]}" if pat.startswith('FT') else '-'
+                )
             })
     df_det = pd.DataFrame(rows)
     buf3 = BytesIO()
     with pd.ExcelWriter(buf3, engine="openpyxl") as w3:
         df_det.to_excel(w3, sheet_name="Detalle", index=False)
     buf3.seek(0)
-    st.session_state.buf3 = buf3
-    st.session_state.fn3  = f"Detalle_Programacion_{suf}.xlsx"
+    st.session_state['buf3'] = buf3
 
     # 7.4 Verificación cobertura
     cov_rows = []
     for d, dia in enumerate(dias_semana):
         for h in range(24):
             req = required_resources[d][h]
-            work = sum(1 for pat,off in plan
-                       if off!=d and shifts_coverage.get(pat,[0]*24)[h])
+            work = sum(
+                1 for pat,off in plan
+                if off!=d and shifts_coverage.get(pat,[0]*24)[h]
+            )
             cov_rows.append({
                 'Día Semana': dia,
                 'Hora': f"{h:02d}:00",
@@ -317,41 +214,38 @@ def run_optimization():
     with pd.ExcelWriter(buf4, engine="openpyxl") as w4:
         df_cov.to_excel(w4, sheet_name="Cobertura", index=False)
     buf4.seek(0)
-    st.session_state.buf4 = buf4
-    st.session_state.fn4  = f"Verificacion_Cobertura_{suf}.xlsx"
+    st.session_state['buf4'] = buf4
 
 # ——— Botón de ejecución ———————————————————————————
-if 'buf1' not in st.session_state:
-    if st.button("🚀 Ejecutar Optimización"):
-        run_optimization()
+if st.button("🚀 Ejecutar Optimización"):
+    # limpiamos resultados previos
+    for k in ['buf1','buf2','buf3','buf4']:
+        st.session_state.pop(k, None)
+    run_optimization()
 
-# ——— Siempre mostrar los botones de descarga si existen ———————————————————————————
+# ——— Descargas ————————————————————————————————————
 if 'buf1' in st.session_state:
     st.download_button(
-        "⬇️ Descargar Resultados crudos",
-        st.session_state.buf1,
-        file_name=st.session_state.fn1,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl1"
+        "Descargar Resultados crudos",
+        st.session_state['buf1'],
+        file_name=f"Result_{datetime.datetime.now():%Y%m%d_%H%M%S}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     st.download_button(
-        "⬇️ Descargar Plan de Contratación",
-        st.session_state.buf2,
-        file_name=st.session_state.fn2,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl2"
+        "Descargar Plan de Contratación",
+        st.session_state['buf2'],
+        file_name=f"Plan_Contratacion_{datetime.datetime.now():%Y%m%d_%H%M%S}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     st.download_button(
-        "⬇️ Descargar Detalle Programación",
-        st.session_state.buf3,
-        file_name=st.session_state.fn3,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl3"
+        "Descargar Detalle de Programación",
+        st.session_state['buf3'],
+        file_name=f"Detalle_Programacion_{datetime.datetime.now():%Y%m%d_%H%M%S}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     st.download_button(
-        "⬇️ Descargar Verificación Cobertura",
-        st.session_state.buf4,
-        file_name=st.session_state.fn4,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl4"
+        "Descargar Verificación de Cobertura",
+        st.session_state['buf4'],
+        file_name=f"Verificacion_Cobertura_{datetime.datetime.now():%Y%m%d_%H%M%S}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
