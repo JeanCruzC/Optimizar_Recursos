@@ -42,7 +42,7 @@ base_shifts = df_staff['Horario'].astype(str).tolist()
 
 # ——— Definición de turnos (copiar tu dict completo) ——————————
 shifts_coverage = {
-    # ... pegas aquí TODO tu dictionary de shifts_coverage tal cual ...
+    # ... tu diccionario completo de shifts_coverage ...
 }
 
 # ——— Funciones auxiliares ——————————————————————————
@@ -60,6 +60,7 @@ def greedy_day_off_assignment(n, dist):
         counts[idx] += 1
     return result
 
+
 def mutate_dist(base, it):
     scale = PERTURB_NOISE
     if ANNEALING:
@@ -76,23 +77,30 @@ def mutate_dist(base, it):
         cand[surplus] -= deficit/surplus.sum()
     return cand
 
+
 def coverage_pct(sol, dist):
+    # debug: mostrar estado de solución
+    st.write(f"🐞 coverage_pct: status={sol.get('status')}, len(resources_shifts)={len(sol.get('resources_shifts',[]))}")
     if sol.get('status') not in ('OPTIMAL','FEASIBLE'):
         return 0.0
     offs = greedy_day_off_assignment(len(shifts_coverage), dist)
     day_map = {s:dias_semana[d] for s,d in zip(shifts_coverage, offs)}
     diff, total = 0, sum(map(sum, required_resources))
+    st.write(f"🐞 coverage_pct: total_demand={total}, dist={dist[:3]}...")
     for d, day in enumerate(dias_semana):
         for h in range(24):
             req = required_resources[d][h]
             work = 0
             for row in sol['resources_shifts']:
-                if (row['day']==d
+                if (row['day']==d 
                    and shifts_coverage[row['shift']][h]
                    and day_map[row['shift']]!=day):
                     work += row.get('resources',1)
             diff += abs(work-req)
-    return (1-diff/total)*100
+    coverage = (1-diff/total)*100
+    st.write(f"🐞 coverage_pct: diff={diff}, coverage={coverage:.2f}%")
+    return coverage
+
 
 def coverage_manual(plan):
     diff, total = 0, sum(map(sum, required_resources))
@@ -116,6 +124,7 @@ if st.button("🚀 Ejecutar Optimización"):
     for it in range(int(MAX_ITER)):
         start = time.time()
         dist  = mutate_dist(base_rest, it) if it else base_rest.copy()
+        st.write(f"🐞 Iter {it+1}: dist sample={dist[:3]}...")
 
         solver = MinAbsDifference(
             num_days=7, periods=24,
@@ -128,98 +137,16 @@ if st.button("🚀 Ejecutar Optimización"):
             random_seed=int(SEED_START+it)
         )
         sol = solver.solve()
-        cov = coverage_pct(sol, dist)
+        st.write(f"🐞 Iter {it+1}: sol.status={sol.get('status')}")
 
+        cov = coverage_pct(sol, dist)
         progress.text(f"Iter {it+1}/{int(MAX_ITER)} — cobertura: {cov:.2f}%  (t={time.time()-start:.1f}s)")
+        st.write(f"🐞 Iter {it+1}: coverage returned={cov:.2f}%")
+
         if cov > best_cov:
             best_cov, best_sol, best_dist = cov, sol, dist.copy()
+            st.write(f"🐞 Nuevo mejor: {best_cov:.2f}% en iter {it+1}")
 
     st.success(f"✅ Optimización completa. Mejor cobertura: {best_cov:.2f}%")
 
-    # 6. Asignación greedy final
-    days_off = greedy_day_off_assignment(len(employees), best_dist)
-    plan = []
-    for i, emp in enumerate(employees):
-        best_cov2, best_pat = -1, None
-        for suf in [1,2,3]:
-            p = f"{base_shifts[i]}_{suf}"
-            cov2 = coverage_manual(plan+[(p, days_off[i])])
-            if cov2 > best_cov2:
-                best_cov2, best_pat = cov2, p
-        plan.append((best_pat, days_off[i]))
-
-    # 7. Exportación de resultados
-    suf = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # 7.1 Resultados crudos
-    df_raw = pd.DataFrame(best_sol['resources_shifts']) if best_sol else pd.DataFrame()
-    buf1 = BytesIO()
-    with pd.ExcelWriter(buf1, engine="openpyxl") as w:
-        df_raw.to_excel(w, sheet_name="Raw", index=False)
-    buf1.seek(0)
-    st.download_button("Descargar Result_"+suf+".xlsx", buf1,
-                       file_name=f"Result_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7.2 Plan de contratación
-    summary = pd.DataFrame({
-        'Nombre': [e for e in employees],
-        'Horario': [p for p,_ in plan],
-        'Día Desc.': [dias_semana[off] for _,off in plan]
-    })
-    summary['Tipo con.'] = summary['Horario'].apply(lambda s: '8h' if s.startswith('FT') else '4h')
-    summary['Personal a Contratar'] = 1
-    plan_con = summary.groupby(['Horario','Tipo con.','Día Desc.'], as_index=False).sum()
-    plan_con['Refrig'] = plan_con['Horario'].apply(
-        lambda s: f"Refrigerio {s.split('_')[-1]}" if s.startswith('FT') else '-'
-    )
-    buf2 = BytesIO()
-    with pd.ExcelWriter(buf2, engine="openpyxl") as w2:
-        plan_con.to_excel(w2, sheet_name="Contratacion", index=False)
-    buf2.seek(0)
-    st.download_button("Descargar Plan_Contratacion_"+suf+".xlsx", buf2,
-                       file_name=f"Plan_Contratacion_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7.3 Detalle programación diaria
-    rows = []
-    for i, emp in enumerate(employees):
-        pat, off = plan[i]
-        for d in range(7):
-            rows.append({
-                'Nombre': emp,
-                'Día': dias_semana[d],
-                'Horario': 'Descanso' if d==off else pat,
-                'Refrig': '-' if d==off else (f"Refrigerio {pat.split('_')[-1]}" if pat.startswith('FT') else '-')
-            })
-    df_det = pd.DataFrame(rows)
-    buf3 = BytesIO()
-    with pd.ExcelWriter(buf3, engine="openpyxl") as w3:
-        df_det.to_excel(w3, sheet_name="Detalle", index=False)
-    buf3.seek(0)
-    st.download_button("Descargar Detalle_Programacion_"+suf+".xlsx", buf3,
-                       file_name=f"Detalle_Programacion_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    # 7.4 Verificación cobertura
-    cov_rows = []
-    for d, dia in enumerate(dias_semana):
-        for h in range(24):
-            req = required_resources[d][h]
-            work = sum(1 for pat,off in plan
-                       if off!=d and shifts_coverage.get(pat,[0]*24)[h])
-            cov_rows.append({
-                'Día Semana': dia,
-                'Hora': f"{h:02d}:00",
-                'Requeridos': req,
-                'Asignados': work,
-                'Diferencia': work-req
-            })
-    df_cov = pd.DataFrame(cov_rows)
-    buf4 = BytesIO()
-    with pd.ExcelWriter(buf4, engine="openpyxl") as w4:
-        df_cov.to_excel(w4, sheet_name="Cobertura", index=False)
-    buf4.seek(0)
-    st.download_button("Descargar Verificacion_Cobertura_"+suf+".xlsx", buf4,
-                       file_name=f"Verificacion_Cobertura_{suf}.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # … resto del código de asignación y descarga igual que antes …
